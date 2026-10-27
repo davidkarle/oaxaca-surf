@@ -1,0 +1,61 @@
+# Builds the site with fresh GFS-Wave spectra and NHC storm data, then deploys it to GitHub Pages.
+# Runs hourly (GFS-Wave updates 4x/day, NHC advisories every 6 h), on every push, and on demand.
+name: Refresh data and deploy
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install numpy
+
+      # Either source can be briefly unavailable; the site still deploys with whatever succeeded.
+      - name: GFS-Wave spectra
+        continue-on-error: true
+        run: python tools/fetch_spectra.py --force
+
+      - name: NHC storms
+        continue-on-error: true
+        run: python tools/fetch_storms.py
+
+      - name: Assemble site
+        run: |
+          mkdir -p _site/spectra _site/storms
+          cp oaxaca-surf.html _site/index.html
+          cp oaxaca-surf.html _site/oaxaca-surf.html
+          cp spectra/latest.json _site/spectra/ || true
+          cp storms/latest.json _site/storms/ || true
+          ls -R _site
+
+      - uses: actions/upload-pages-artifact@v3
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

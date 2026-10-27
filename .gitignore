@@ -1,0 +1,6 @@
+# generated data (built fresh by tools/ scripts and the Pages workflow)
+spectra/
+storms/
+bathy/gebco_2026.zip
+__pycache__/
+*.pyc
