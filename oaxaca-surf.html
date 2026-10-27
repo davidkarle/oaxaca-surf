@@ -130,7 +130,7 @@ a{color:var(--sea)}
         <p><b>2b. Full spectra (GFS-Wave spectral).</b> When the app runs from <span class="mono">tools/serve.py</span>, it also uses NOAA's full GFS-Wave 2D spectra (50 frequencies × 36 directions, hourly) from the two output stations off Oaxaca, blended by distance. Every frequency/direction bin is multiplied by its own ray-traced refraction factor, so no swell is summarised into one period and the long-period forerunners that the Puerto canyon amplifies are counted properly. The bins' real directional spread replaces the assumed one. It appears as its own model, "GFS-Wave spectral".</p>
         <p><b>2c. Hurricane swell.</b> Global wave models are too coarse to resolve a hurricane's small, intense core, so swell from storms near Mexico often comes in bigger than forecast. For each active eastern Pacific storm the app reads NHC's forecast advisory (track, intensity, 4 m seas radii) and runs Young's (1988) parametric hurricane wave model hour by hour along the track: radius of max wind from Willoughby &amp; Rahn (2004), an equivalent fetch that includes the "trapped fetch" boost when the storm moves at about the waves' group speed, then JONSWAP growth. Swell decays with distance as √(r₀/r), with r₀ fitted so the height matches NHC's 4 m-seas radius toward the spot, and arrives after distance ÷ group speed. It then goes through the same refraction and breaking steps. It's shown as its own dashed line, not mixed into the ensemble.</p>
         <p><b>3. Breaking height.</b> Komar &amp; Gaughan (1972): H<sub>b</sub> = 0.39·g<sup>0.2</sup>·(T·H<sub>0</sub>²)<sup>0.4</sup>. This is the piece generic forecasts underweight: a 1 m, 18 s swell breaks bigger than a 1 m, 10 s swell. Partitions combine as energy (root-sum-square).</p>
-        <p><b>4. Your calibration.</b> Every report you log fits ln(observed/predicted) = a + b·(T−12) per spot, shrunk toward a starting value until enough reports exist. That starting value is zero, except at Zicatela: the Puerto Escondido canyon that makes it the biggest spot on the coast isn't in any public depth data (GEBCO shows a smooth shelf there), so Zicatela starts at ×1.42 from local knowledge (about 1.5× Plataforma on typical swell, more on long-period). The prior counts like about two reports, so your own sessions take over quickly. The leave-one-out error is shown next to Surfline's so you can see which is closer on your own data.</p>
+        <p><b>4. Your calibration.</b> Every report you log fits ln(observed/predicted) = a + b·(T−12) per spot, shrunk toward a starting value until enough reports exist. That starting value is zero, except at Zicatela: the Puerto Escondido canyon that makes it the biggest spot on the coast isn't in any public depth data (GEBCO shows a smooth shelf there), so Zicatela starts at ×1.42 from local knowledge (about 1.5× Plataforma on typical swell, more on long-period). The prior counts like about two reports, so your own sessions take over quickly. The same reports also score each wave model: every report keeps each model's own forecast for that hour, and models whose forecasts land closer to what was observed get more weight in the ensemble (a weighted median), all spots pooled since a model's offshore bias is shared along the coast. Scores start neutral and move gradually (a starting value worth three reports), so it takes several sessions before one model dominates. The leave-one-out error is shown next to Surfline's so you can see which is closer on your own data.</p>
         <p><b>Wind</b> is the mean of ECMWF IFS, GFS and ICON at the beach, classified against each spot's offshore direction. <b>Tide</b> is Open-Meteo's sea level (includes tide). All spot parameters, including coordinates, are editable in the spot panel.</p>
         <p class="warn"><b>Limits, stated plainly:</b> I couldn't find a public real-time wave buoy off Oaxaca, so there's no buoy correction; your logged reports play that role. Coordinates for Puertecito and Plataforma are estimates from listings and travel times. GEBCO is coarse near shore (the 10 m start points land 1–3 km off the beach), so it captures the canyon and shelf but not sandbars, reef or the last few hundred metres of a point; the per-spot calibration from your reports covers that. The app's accuracy over Surfline only becomes real after you log a few sessions per spot.</p>
       </div>
@@ -257,7 +257,7 @@ function fitCalibration(spotId, excludeIdx){
   const rows = [];
   LOGS.forEach((L,i) => {
     if(i===excludeIdx || L.spot!==spotId || !L.parts) return;
-    const p = rawPredFt(L.parts, spot);
+    const p = rawPredFt(L.parts, spot, L.models);
     if(p>0.3 && L.obs>0) rows.push({y:Math.log(L.obs/p), x:(L.tp||12)-12});
   });
   // ridge: minimize sum (y - a - b x)^2 + la (a-a0)^2 + lb (b-b0)^2; the prior weighs like ~2 reports
@@ -268,10 +268,44 @@ function fitCalibration(spotId, excludeIdx){
   const a = (Sy*Sxx - Sx*Sxy)/det, b = (S1*Sxy - Sx*Sy)/det;
   return {a: isFinite(a)?a:a0, b: isFinite(b)?b:b0, n: rows.length, prior: !!spot.calPrior};
 }
-// per-model parts -> median raw face ft
-function rawPredFt(partsByModel, spot){
+// ---------- per-model skill from session reports ----------
+// Each report stores every model's raw prediction for that hour. A model's score is its mean squared log error
+// over all reports (spots pooled: a model's offshore bias is shared along the coast), shrunk toward a typical 0.1
+// (~32 % error) with the weight of 3 reports so one report can't swing it. Ensemble weight = 1 / shrunk MSE.
+const SKILL_N0 = 3, SKILL_MSE0 = 0.1;
+let SKILL = {};
+function modelSkill(){
+  const s = {};
+  LOGS.forEach(L => {
+    if(!L.parts || !L.models || !(L.obs>0)) return;
+    const spot = SPOTS.find(x=>x.id===L.spot); if(!spot) return;
+    L.parts.forEach((p,k) => {
+      const m = L.models[k], f = breakHeight(p, spot)*M2FT;
+      if(!m || !(f>0.3)) return;
+      const e = Math.log(L.obs/f), o = s[m] ??= {n:0, se:0, sum:0};
+      o.n++; o.se += e*e; o.sum += e;
+    });
+  });
+  for(const o of Object.values(s)){ o.bias = o.sum/o.n; o.w = (o.n + SKILL_N0)/(o.se + SKILL_N0*SKILL_MSE0); }
+  return s;
+}
+const modelWeight = m => SKILL[m] ? SKILL[m].w : 1/SKILL_MSE0;
+// Weighted median; with equal weights it is exactly the ordinary median.
+function weightedMedian(vals, ws){
+  const a = vals.map((v,i)=>({v, w:ws[i]})).filter(x=>x.v!=null && isFinite(x.v)).sort((x,y)=>x.v-y.v);
+  if(!a.length) return null;
+  const W = a.reduce((s,x)=>s+x.w,0); let c = 0;
+  for(let i=0;i<a.length;i++){
+    c += a[i].w;
+    if(Math.abs(c - W/2) < 1e-9*W && i+1 < a.length) return (a[i].v + a[i+1].v)/2;
+    if(c > W/2) return a[i].v;
+  }
+  return a[a.length-1].v;
+}
+// per-model parts -> skill-weighted median raw face ft (models: names in the same order, if known)
+function rawPredFt(partsByModel, spot, models){
   const v = partsByModel.map(parts => breakHeight(parts, spot)*M2FT);
-  return median(v) || 0;
+  return weightedMedian(v, partsByModel.map((_,k) => models ? modelWeight(models[k]) : 1)) || 0;
 }
 function calibrate(ft, tp, cal){ return ft * Math.exp(cal.a + cal.b*((tp||12)-12)); }
 
@@ -371,8 +405,12 @@ async function loadSpotData(spot, range){
     waves.forEach(w => {
       const H = w.H, j = H.time.indexOf(t); if(j<0) return;
       const pk = (H.swell_wave_peak_period||[])[j], mp = (H.swell_wave_period||[])[j];
+      // A model that lumps all swell into one partition (DWD GWAM: no secondary/tertiary swell) gets its
+      // energy-weighted mean period: its peak period belongs only to the longest train (e.g. 17.6 s vs a 10 s mean)
+      // and would inflate both breaking height and long-period refraction for the whole lump.
+      const lumped = !H.totalOnly && !(H.secondary_swell_wave_height||[]).some(v=>v!=null);
       const parts = [
-        {h:H.swell_wave_height[j], t: pk || (mp? mp*1.1 : null), d:H.swell_wave_direction[j], kind:"swell"},
+        {h:H.swell_wave_height[j], t: lumped ? mp : (pk || (mp? mp*1.1 : null)), d:H.swell_wave_direction[j], kind:"swell"},
         {h:(H.secondary_swell_wave_height||[])[j], t:(H.secondary_swell_wave_period||[])[j], d:(H.secondary_swell_wave_direction||[])[j], kind:"swell2"},
         {h:(H.tertiary_swell_wave_height||[])[j], t:(H.tertiary_swell_wave_period||[])[j], d:(H.tertiary_swell_wave_direction||[])[j], kind:"swell3"},
         {h:H.wind_wave_height[j], t:H.wind_wave_period[j], d:H.wind_wave_direction[j], kind:"wind"}
@@ -415,7 +453,7 @@ function windClass(spot, wd, ws){
 function forecastRow(row, spot, cal){
   const per = row.partsByModel.map(p => breakHeight(p, spot)*M2FT);
   const tp = median(row.partsByModel.map(p=>p[0]&&p[0].t));
-  const raw = median(per);
+  const raw = weightedMedian(per, row.prim.map(p => modelWeight(p.model)));
   const f = x => x==null?null:calibrate(x, tp, cal);
   const mid = f(raw), lo = per.length ? f(Math.min(...per)) : null, hi = per.length ? f(Math.max(...per)) : null;
   const w = windClass(spot, row.wd, row.ws||0);
@@ -467,7 +505,7 @@ async function show(force){
   renderTabs();
   const spot = SPOTS.find(s=>s.id===current);
   document.getElementById("nowCard").innerHTML = `<div class="loader">Loading ${spot.name}…</div>`;
-  try{ await loadSharedReports(); await ensureData(spot, force); }
+  try{ await loadSharedReports(); SKILL = modelSkill(); await ensureData(spot, force); }
   catch(e){
     const box = document.getElementById("nowCard");
     if(e.blocked){
@@ -629,9 +667,12 @@ function renderHourly(rows, spot){
 function renderModels(rows){
   if(!rows.length){ document.getElementById("models").innerHTML = ""; return; }
   const names = [...new Set(rows.flatMap(r=>r.prim.map(p=>p.model)))];
-  document.getElementById("models").innerHTML = `<table><tr><th>Model</th>${rows.map(r=>`<th>${r.t.slice(11)}</th>`).join("")}</tr>
-    ${names.map(n => `<tr><td>${n}</td>${rows.map(r => { const p = r.prim.find(x=>x.model===n); return `<td class="mono">${p?`${fmt(p.h*M2FT)}ft ${fmt(p.t,0)}s ${Math.round(p.d)}°`:"–"}</td>`; }).join("")}</tr>`).join("")}</table>
-    <p class="note">If one model sits far from the others for days in a row, your logged reports will show which one to trust here.</p>`;
+  const W = names.reduce((s,n)=>s+modelWeight(n),0);
+  const vs = n => { const s = SKILL[n]; if(!s) return "–"; const x = Math.exp(-s.bias)-1;
+    return `${Math.round(Math.abs(x)*100)}% ${x>=0?"high":"low"} (${s.n})`; };
+  document.getElementById("models").innerHTML = `<table><tr><th>Model</th>${rows.map(r=>`<th>${r.t.slice(11)}</th>`).join("")}<th>Weight</th><th>vs reports</th></tr>
+    ${names.map(n => `<tr><td>${n}</td>${rows.map(r => { const p = r.prim.find(x=>x.model===n); return `<td class="mono">${p?`${fmt(p.h*M2FT)}ft ${fmt(p.t,0)}s ${Math.round(p.d)}°`:"–"}</td>`; }).join("")}<td class="mono">${Math.round(100*modelWeight(n)/W)}%</td><td class="mono">${vs(n)}</td></tr>`).join("")}</table>
+    <p class="note">Weight = this model's share of the ensemble, from how close its own forecast came to the session reports (all spots; number of reports in brackets). "vs reports" is how much it typically reads above or below what was observed, before calibration. With no reports every model weighs the same.</p>`;
 }
 
 // ---------- logging ----------
@@ -646,7 +687,7 @@ function renderLog(){
   let eRaw=[], eCal=[], eSL=[];
   mine.forEach(L => {
     if(!L.parts) return;
-    const raw = rawPredFt(L.parts, spot);
+    const raw = rawPredFt(L.parts, spot, L.models);
     const cal = calibrate(raw, L.tp, fitCalibration(current, L.i));
     eRaw.push(Math.abs(raw-L.obs)); eCal.push(Math.abs(cal-L.obs));
     if(L.sl!=null) eSL.push({m:Math.abs(cal-L.obs), s:Math.abs(L.sl-L.obs)});
@@ -662,7 +703,7 @@ function renderLog(){
     <div><b>${eSL.length? `${wins}/${eSL.length}`:"–"}</b><span>sessions this app was closer</span></div>
     <div><b>×${fmt(Math.exp(cal.a),2)}</b><span>size factor · period term ${cal.b>=0?"+":""}${fmt(cal.b*100,1)}%/s</span></div>`;
   document.getElementById("logTable").innerHTML = mine.length ? `<table><tr><th>When</th><th>Observed</th><th>This app</th><th>Surfline</th><th>Swell</th><th>Note</th><th></th></tr>
-    ${mine.slice().reverse().map(L => { const raw = L.parts?rawPredFt(L.parts, spot):null; const c = raw!=null?calibrate(raw,L.tp,cal):null;
+    ${mine.slice().reverse().map(L => { const raw = L.parts?rawPredFt(L.parts, spot, L.models):null; const c = raw!=null?calibrate(raw,L.tp,cal):null;
       return `<tr><td class="mono">${L.t.replace("T"," ")}</td><td class="mono"><b>${fmt(L.obs)}</b></td><td class="mono">${fmt(c)}</td><td class="mono">${fmt(L.sl)}</td>
       <td class="mono">${L.tp?fmt(L.tp,0)+"s":"–"} ${compass(L.dir)}</td><td style="text-align:left">${(L.note||"").replace(/</g,"&lt;")}</td>
       <td>${L.shared ? `<span class="note" title="From the shared reports file">shared</span>` : `<button class="btn ghost" data-del="${L.i}" style="padding:2px 8px">✕</button>`}</td></tr>`;}).join("")}</table>` : `<p class="note">No reports for ${spot.name} yet.</p>`;
@@ -689,6 +730,7 @@ document.getElementById("logForm").onsubmit = async ev => {
   }catch(e){ /* save without model state */ }
   const L = {spot:spotId, t, obs, sl, note:document.getElementById("lNote").value.trim(),
              parts: row ? row.partsByModel : null,
+             models: row ? row.prim.map(p=>p.model) : null,
              tp: row ? median(row.partsByModel.map(p=>p[0]&&p[0].t)) : null,
              dir: row ? median(row.prim.map(x=>x.d)) : null};
   LOGS.push(L); saveLogs();
