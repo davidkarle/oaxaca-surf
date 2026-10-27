@@ -101,12 +101,12 @@ a{color:var(--sea)}
 
   <div class="card section" id="logCard">
     <h2>Log a session: this is what makes it beat Surfline</h2>
-    <p class="note">After you surf (or watch), enter what the face height actually was. Add what Surfline said for that hour too. The app fits a correction per spot (size bias plus a period term, since long-period swell is where generic models miss most here) and tracks its error against Surfline's.</p>
+    <p class="note">After you surf (or watch), enter the face height of the biggest sets: it's compared with the top of the app's range. Add the top of Surfline's range for that hour too. Every report corrects the whole coast's size level and this spot's own factor (plus a period term, since long-period swell is where generic models miss most here), and the app tracks its error against Surfline's.</p>
     <form class="form" id="logForm">
       <label>Spot<select id="lSpot"></select></label>
       <label>Date &amp; time<input type="datetime-local" id="lTime" required></label>
-      <label>Observed face (ft)<input type="number" id="lObs" step="0.5" min="0" required placeholder="e.g. 6"></label>
-      <label>Surfline said (ft, midpoint)<input type="number" id="lSL" step="0.5" min="0" placeholder="optional"></label>
+      <label>Biggest set faces (ft)<input type="number" id="lObs" step="0.5" min="0" required placeholder="e.g. 6"></label>
+      <label>Surfline said (ft, top of range)<input type="number" id="lSL" step="0.5" min="0" placeholder="optional"></label>
       <label>Note<input id="lNote" placeholder="sets bigger, sandbar…"></label>
       <button class="btn" type="submit">Save report</button>
     </form>
@@ -130,7 +130,7 @@ a{color:var(--sea)}
         <p><b>2b. Full spectra (GFS-Wave spectral).</b> When the app runs from <span class="mono">tools/serve.py</span>, it also uses NOAA's full GFS-Wave 2D spectra (50 frequencies × 36 directions, hourly) from the two output stations off Oaxaca, blended by distance. Every frequency/direction bin is multiplied by its own ray-traced refraction factor, so no swell is summarised into one period and the long-period forerunners that the Puerto canyon amplifies are counted properly. The bins' real directional spread replaces the assumed one. It appears as its own model, "GFS-Wave spectral".</p>
         <p><b>2c. Hurricane swell.</b> Global wave models are too coarse to resolve a hurricane's small, intense core, so swell from storms near Mexico often comes in bigger than forecast. For each active eastern Pacific storm the app reads NHC's forecast advisory (track, intensity, 4 m seas radii) and runs Young's (1988) parametric hurricane wave model hour by hour along the track: radius of max wind from Willoughby &amp; Rahn (2004), an equivalent fetch that includes the "trapped fetch" boost when the storm moves at about the waves' group speed, then JONSWAP growth. Swell decays with distance as √(r₀/r), with r₀ fitted so the height matches NHC's 4 m-seas radius toward the spot, and arrives after distance ÷ group speed. It then goes through the same refraction and breaking steps. It's shown as its own dashed line, not mixed into the ensemble.</p>
         <p><b>3. Breaking height.</b> Komar &amp; Gaughan (1972): H<sub>b</sub> = 0.39·g<sup>0.2</sup>·(T·H<sub>0</sub>²)<sup>0.4</sup>. This is the piece generic forecasts underweight: a 1 m, 18 s swell breaks bigger than a 1 m, 10 s swell. Partitions combine as energy (root-sum-square).</p>
-        <p><b>4. Your calibration.</b> Every report you log fits ln(observed/predicted) = a + b·(T−12) per spot, shrunk toward a starting value until enough reports exist. That starting value is zero, except at Zicatela: the Puerto Escondido canyon that makes it the biggest spot on the coast isn't in any public depth data (GEBCO shows a smooth shelf there), so Zicatela starts at ×1.42 from local knowledge (about 1.5× Plataforma on typical swell, more on long-period). The prior counts like about two reports, so your own sessions take over quickly. The same reports also score each wave model: every report keeps each model's own forecast for that hour, and models whose forecasts land closer to what was observed get more weight in the ensemble (a weighted median), all spots pooled since a model's offshore bias is shared along the coast. Scores start neutral and move gradually (a starting value worth three reports), so it takes several sessions before one model dominates. The leave-one-out error is shown next to Surfline's so you can see which is closer on your own data.</p>
+        <p><b>4. Your calibration.</b> A report is the face of the biggest sets, so it's compared with the top of the app's range (1.25× its central value, about the ratio of the biggest tenth of waves to the biggest third). All reports are fitted together as ln(observed / predicted sets) = coast-wide level + spot factor + period term. The coast-wide level is shared by every spot, so a report at one spot also corrects the others when the whole forecast runs high or low. It starts at zero and counts like half a report, so it follows your reports quickly. Each spot's factor starts at zero, except at Zicatela: the Puerto Escondido canyon that makes it the biggest spot on the coast isn't in any public depth data (GEBCO shows a smooth shelf there), so Zicatela starts at ×1.42 from local knowledge (about 1.5× Plataforma on typical swell, more on long-period). The prior counts like about two reports, so your own sessions take over quickly. The same reports also score each wave model: every report keeps each model's own forecast for that hour, and models whose forecasts land closer to what was observed get more weight in the ensemble (a weighted median), all spots pooled since a model's offshore bias is shared along the coast. Scores start neutral and move gradually (a starting value worth three reports), so it takes several sessions before one model dominates. The leave-one-out error is shown next to Surfline's so you can see which is closer on your own data.</p>
         <p><b>Wind</b> is the mean of ECMWF IFS, GFS and ICON at the beach, classified against each spot's offshore direction. <b>Tide</b> is Open-Meteo's sea level (includes tide). All spot parameters, including coordinates, are editable in the spot panel.</p>
         <p class="warn"><b>Limits, stated plainly:</b> I couldn't find a public real-time wave buoy off Oaxaca, so there's no buoy correction; your logged reports play that role. Coordinates for Puertecito and Plataforma are estimates from listings and travel times. GEBCO is coarse near shore (the 10 m start points land 1–3 km off the beach), so it captures the canyon and shelf but not sandbars, reef or the last few hundred metres of a point; the per-spot calibration from your reports covers that. The app's accuracy over Surfline only becomes real after you log a few sessions per spot.</p>
       </div>
@@ -251,22 +251,51 @@ function breakHeight(parts, spot){
   for(const p of parts){ const hb = breakPartition(p.h, p.t, p.d, spot, p.pre); e += hb*hb; }
   return Math.sqrt(e);
 }
-// Calibration: ln(obs/pred) = a + b*(T-12), ridge-shrunk toward the spot's prior (calPrior, default 0).
-function fitCalibration(spotId, excludeIdx){
-  const spot = SPOTS.find(s=>s.id===spotId);
-  const rows = [];
-  LOGS.forEach((L,i) => {
-    if(i===excludeIdx || L.spot!==spotId || !L.parts) return;
-    const p = rawPredFt(L.parts, spot, L.models);
-    if(p>0.3 && L.obs>0) rows.push({y:Math.log(L.obs/p), x:(L.tp||12)-12});
+// Reports are the biggest set faces, i.e. the top of the displayed range (faceRange: 0.8x..1.25x the calibrated
+// value; H1/10 ~ 1.27 H1/3 for Rayleigh waves). Calibration compares them with SET x prediction.
+const SET = 1.25;
+// Calibration, fitted jointly over all reports: ln(obs / (SET * raw)) = g + s_spot + b_spot*(T-12).
+// g is coast-wide (a bias shared by every spot, e.g. the breaking formula or the models running high), so a report
+// at one spot corrects all of them; s_spot is what's particular to a spot; b_spot its period dependence.
+// Ridge priors: g ~ 0 worth half a report (the shared level follows reports quickly), s ~ calPrior worth 2 reports,
+// b ~ 0. With no reports this is exactly the uncalibrated forecast (plus Zicatela's prior).
+const CAL_LG = 0.5, CAL_LS = 2, CAL_LB = 40;
+function solveLinear(A, c){   // Gaussian elimination with partial pivoting; the system is small and well posed
+  const n = c.length, M = A.map((r,i)=>[...r, c[i]]);
+  for(let i=0;i<n;i++){
+    let p = i; for(let r=i+1;r<n;r++) if(Math.abs(M[r][i]) > Math.abs(M[p][i])) p = r;
+    [M[i], M[p]] = [M[p], M[i]];
+    for(let r=i+1;r<n;r++){ const f = M[r][i]/M[i][i]; for(let k=i;k<=n;k++) M[r][k] -= f*M[i][k]; }
+  }
+  const x = new Array(n).fill(0);
+  for(let i=n-1;i>=0;i--){ let s = M[i][n]; for(let k=i+1;k<n;k++) s -= M[i][k]*x[k]; x[i] = s/M[i][i]; }
+  return x;
+}
+function fitAll(excludeIdx){
+  const ids = SPOTS.map(s=>s.id), K = ids.length, N = 1 + 2*K;
+  const A = Array.from({length:N}, () => new Array(N).fill(0)), c = new Array(N).fill(0);
+  A[0][0] += CAL_LG;
+  SPOTS.forEach((s,k) => {
+    A[1+k][1+k] += CAL_LS;     c[1+k] += CAL_LS * (s.calPrior ? s.calPrior.a : 0);
+    A[1+K+k][1+K+k] += CAL_LB; c[1+K+k] += CAL_LB * (s.calPrior ? s.calPrior.b : 0);
   });
-  // ridge: minimize sum (y - a - b x)^2 + la (a-a0)^2 + lb (b-b0)^2; the prior weighs like ~2 reports
-  const la = 2, lb = 40, a0 = spot.calPrior ? spot.calPrior.a : 0, b0 = spot.calPrior ? spot.calPrior.b : 0;
-  let Sxx=lb, Sx=0, S1=la, Sy=la*a0, Sxy=lb*b0;
-  rows.forEach(r => { S1+=1; Sx+=r.x; Sxx+=r.x*r.x; Sy+=r.y; Sxy+=r.x*r.y; });
-  const det = S1*Sxx - Sx*Sx;
-  const a = (Sy*Sxx - Sx*Sxy)/det, b = (S1*Sxy - Sx*Sy)/det;
-  return {a: isFinite(a)?a:a0, b: isFinite(b)?b:b0, n: rows.length, prior: !!spot.calPrior};
+  const n = {};
+  LOGS.forEach((L,i) => {
+    if(i===excludeIdx || !L.parts) return;
+    const k = ids.indexOf(L.spot); if(k<0) return;
+    const p = rawPredFt(L.parts, SPOTS[k], L.models);
+    if(!(p>0.3 && L.obs>0)) return;
+    const y = Math.log(L.obs/(SET*p)), idx = [0, 1+k, 1+K+k], v = [1, 1, (L.tp||12)-12];
+    for(let a=0;a<3;a++){ c[idx[a]] += v[a]*y; for(let b=0;b<3;b++) A[idx[a]][idx[b]] += v[a]*v[b]; }
+    n[L.spot] = (n[L.spot]||0) + 1;
+  });
+  const th = solveLinear(A, c);
+  return {g: th[0], nAll: Object.values(n).reduce((a,b)=>a+b, 0),
+          spot: Object.fromEntries(ids.map((id,k) => [id, {s: th[1+k], b: th[1+K+k], n: n[id]||0}]))};
+}
+function fitCalibration(spotId, excludeIdx){
+  const F = fitAll(excludeIdx), sp = F.spot[spotId], spot = SPOTS.find(s=>s.id===spotId);
+  return {a: F.g + sp.s, b: sp.b, g: F.g, s: sp.s, n: sp.n, nAll: F.nAll, prior: !!spot.calPrior};
 }
 // ---------- per-model skill from session reports ----------
 // Each report stores every model's raw prediction for that hour. A model's score is its mean squared log error
@@ -282,7 +311,7 @@ function modelSkill(){
     L.parts.forEach((p,k) => {
       const m = L.models[k], f = breakHeight(p, spot)*M2FT;
       if(!m || !(f>0.3)) return;
-      const e = Math.log(L.obs/f), o = s[m] ??= {n:0, se:0, sum:0};
+      const e = Math.log(L.obs/(SET*f)), o = s[m] ??= {n:0, se:0, sum:0};
       o.n++; o.se += e*e; o.sum += e;
     });
   });
@@ -585,7 +614,7 @@ function renderNow(r, spot, cal, d){
     <div class="row"><span>Wind</span><b><span class="pill ${r.wind.cls}">${r.wind.k}</span> <span class="mono">${fmt(r.ws,0)} kt ${compass(r.wd)}${r.gust?` (g ${fmt(r.gust,0)})`:""}</span></b></div>
     <div class="row"><span>Tide</span><b class="mono">${r.tide!=null?fmt(r.tide*M2FT)+" ft":"n/a"}</b></div>
     <div class="row"><span>Confidence</span><b>${conf}</b></div>
-    <div class="row"><span>Calibration</span><b>${cal.n? `${cal.n} report${cal.n>1?"s":""}${cal.prior?" + local prior":""}, ×${fmt(Math.exp(cal.a),2)}` : cal.prior ? `local prior ×${fmt(Math.exp(cal.a),2)}` : "none yet"}</b></div>`;
+    <div class="row"><span>Calibration</span><b>${cal.nAll ? `×${fmt(Math.exp(cal.a),2)} (${cal.n} here, ${cal.nAll} coast-wide${cal.prior?" + local prior":""})` : cal.prior ? `local prior ×${fmt(Math.exp(cal.a),2)}` : "none yet"}</b></div>`;
 }
 
 function renderSpot(spot, cal){
@@ -699,8 +728,8 @@ function renderLog(){
     if(!L.parts) return;
     const raw = rawPredFt(L.parts, spot, L.models);
     const cal = calibrate(raw, L.tp, fitCalibration(current, L.i));
-    eRaw.push(Math.abs(raw-L.obs)); eCal.push(Math.abs(cal-L.obs));
-    if(L.sl!=null) eSL.push({m:Math.abs(cal-L.obs), s:Math.abs(L.sl-L.obs)});
+    eRaw.push(Math.abs(SET*raw-L.obs)); eCal.push(Math.abs(SET*cal-L.obs));
+    if(L.sl!=null) eSL.push({m:Math.abs(SET*cal-L.obs), s:Math.abs(L.sl-L.obs)});
   });
   const mean = a => a.length? a.reduce((x,y)=>x+y,0)/a.length : null;
   const cal = fitCalibration(current);
@@ -711,9 +740,9 @@ function renderLog(){
     <div><b>${fmt(mean(eCal))} ft</b><span>avg error, calibrated (leave-one-out)</span></div>
     <div><b>${eSL.length?fmt(mean(eSL.map(x=>x.s)))+" ft":"–"}</b><span>Surfline avg error (${eSL.length} compared)</span></div>
     <div><b>${eSL.length? `${wins}/${eSL.length}`:"–"}</b><span>sessions this app was closer</span></div>
-    <div><b>×${fmt(Math.exp(cal.a),2)}</b><span>size factor · period term ${cal.b>=0?"+":""}${fmt(cal.b*100,1)}%/s</span></div>`;
-  document.getElementById("logTable").innerHTML = mine.length ? `<table><tr><th>When</th><th>Observed</th><th>This app</th><th>Surfline</th><th>Swell</th><th>Note</th><th></th></tr>
-    ${mine.slice().reverse().map(L => { const raw = L.parts?rawPredFt(L.parts, spot, L.models):null; const c = raw!=null?calibrate(raw,L.tp,cal):null;
+    <div><b>×${fmt(Math.exp(cal.a),2)}</b><span>size factor here: coast-wide ×${fmt(Math.exp(cal.g),2)} · ${spot.name} ×${fmt(Math.exp(cal.s),2)} · period term ${cal.b>=0?"+":""}${fmt(cal.b*100,1)}%/s</span></div>`;
+  document.getElementById("logTable").innerHTML = mine.length ? `<table><tr><th>When</th><th>Biggest sets</th><th>This app (sets)</th><th>Surfline</th><th>Swell</th><th>Note</th><th></th></tr>
+    ${mine.slice().reverse().map(L => { const raw = L.parts?rawPredFt(L.parts, spot, L.models):null; const c = raw!=null?SET*calibrate(raw,L.tp,cal):null;
       return `<tr><td class="mono">${L.t.replace("T"," ")}</td><td class="mono"><b>${fmt(L.obs)}</b></td><td class="mono">${fmt(c)}</td><td class="mono">${fmt(L.sl)}</td>
       <td class="mono">${L.tp?fmt(L.tp,0)+"s":"–"} ${compass(L.dir)}</td><td style="text-align:left">${(L.note||"").replace(/</g,"&lt;")}</td>
       <td>${L.shared ? `<span class="note" title="From the shared reports file">shared</span>` : `<button class="btn ghost" data-del="${L.i}" style="padding:2px 8px">✕</button>`}</td></tr>`;}).join("")}</table>` : `<p class="note">No reports for ${spot.name} yet.</p>`;
