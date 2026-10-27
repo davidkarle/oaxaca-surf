@@ -93,7 +93,7 @@ a{color:var(--sea)}
         <div class="scroll" id="hourly"></div>
       </div>
       <div class="card section">
-        <h2>Model disagreement (deep-water primary swell)</h2>
+        <h2>Model by model: breaking face and the open-ocean swell behind it</h2>
         <div class="scroll" id="models"></div>
       </div>
     </div>
@@ -530,7 +530,7 @@ async function show(force){
   const dayRows = fc.filter(r => r.t.slice(0,10)===selDay);
   renderChart(dayRows, spot);
   renderHourly(dayRows.filter(r => +r.t.slice(11,13) >= 5 && +r.t.slice(11,13) <= 19), spot);
-  renderModels(dayRows.filter((r,i)=> +r.t.slice(11,13)%3===0 && +r.t.slice(11,13)>=6 && +r.t.slice(11,13)<=18));
+  renderModels(dayRows.filter((r,i)=> +r.t.slice(11,13)%3===0 && +r.t.slice(11,13)>=6 && +r.t.slice(11,13)<=18), spot);
   renderLog();
 }
 
@@ -664,15 +664,25 @@ function renderHourly(rows, spot){
       <td class="mono">${fmt(r.ws,0)} ${arrow(r.wd)} ${compass(r.wd)}</td><td><span class="pill ${r.wind.cls}">${r.wind.k}</span></td>
       <td class="mono">${r.tide!=null?fmt(r.tide*M2FT):"–"}</td></tr>`;}).join("")}</table>`;
 }
-function renderModels(rows){
+function renderModels(rows, spot){
   if(!rows.length){ document.getElementById("models").innerHTML = ""; return; }
   const names = [...new Set(rows.flatMap(r=>r.prim.map(p=>p.model)))];
   const W = names.reduce((s,n)=>s+modelWeight(n),0);
   const vs = n => { const s = SKILL[n]; if(!s) return "–"; const x = Math.exp(-s.bias)-1;
     return `${Math.round(Math.abs(x)*100)}% ${x>=0?"high":"low"} (${s.n})`; };
+  // Each cell: this model's breaking face at the spot (its swell through the spot's refraction, breaking and
+  // calibration, same as the headline number), over the open-ocean primary swell it came from.
+  const cal = fitCalibration(spot.id);
+  const cell = (r, n) => {
+    const k = r.prim.findIndex(x=>x.model===n); if(k<0) return `<td class="mono">–</td>`;
+    const p = r.prim[k], face = calibrate(breakHeight(r.partsByModel[k], spot)*M2FT, r.partsByModel[k][0].t, cal);
+    const d = p.model==="GFS-Wave spectral" ? compass(p.d) : `${Math.round(p.d)}°`;
+    return `<td class="mono"><b>${faceRange(face)} ft</b><br><span class="note">${fmt(p.h*M2FT)}ft ${fmt(p.t,0)}s ${d}</span></td>`;
+  };
   document.getElementById("models").innerHTML = `<table><tr><th>Model</th>${rows.map(r=>`<th>${r.t.slice(11)}</th>`).join("")}<th>Weight</th><th>vs reports</th></tr>
-    ${names.map(n => `<tr><td>${n}</td>${rows.map(r => { const p = r.prim.find(x=>x.model===n); return `<td class="mono">${p?`${fmt(p.h*M2FT)}ft ${fmt(p.t,0)}s ${Math.round(p.d)}°`:"–"}</td>`; }).join("")}<td class="mono">${Math.round(100*modelWeight(n)/W)}%</td><td class="mono">${vs(n)}</td></tr>`).join("")}</table>
-    <p class="note">Weight = this model's share of the ensemble, from how close its own forecast came to the session reports (all spots; number of reports in brackets). "vs reports" is how much it typically reads above or below what was observed, before calibration. With no reports every model weighs the same.</p>`;
+    ${names.map(n => `<tr><td>${n}</td>${rows.map(r => cell(r, n)).join("")}<td class="mono">${Math.round(100*modelWeight(n)/W)}%</td><td class="mono">${vs(n)}</td></tr>`).join("")}</table>
+    <p class="note"><b>Bold:</b> breaking face height at ${spot.name} from that model alone, after refraction, breaking and calibration (the headline forecast combines these). <b>Grey:</b> the open-ocean swell the model forecasts offshore: height, period, direction. For GFS-Wave spectral the grey line is the part of the full spectrum headed for this spot.</p>
+    <p class="note"><b>Weight:</b> the model's share of the ensemble, from how close its breaking estimate (before calibration) came to the session reports, all spots pooled; number of reports in brackets. <b>vs reports:</b> how far above or below the observed face it typically reads. With no reports every model weighs the same.</p>`;
 }
 
 // ---------- logging ----------
