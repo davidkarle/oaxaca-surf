@@ -46,6 +46,7 @@ jobs:
           cp oaxaca-surf.html _site/oaxaca-surf.html
           cp spectra/latest.json _site/spectra/ || true
           cp storms/latest.json _site/storms/ || true
+          cp -r reports _site/ || true
           ls -R _site
 
       - uses: actions/upload-pages-artifact@v3

@@ -199,6 +199,20 @@ function saveSpot(s){
   LS.set("oxs_spots", saved);
 }
 let LOGS = LS.get("oxs_logs", []);
+// Only this browser's own reports are stored locally; shared ones come from reports/reports.json.
+const saveLogs = () => LS.set("oxs_logs", LOGS.filter(L => !L.shared));
+// Shared reports (reports/reports.json in the repo, published with the site) calibrate the app for everyone.
+let sharedLoaded = false;
+async function loadSharedReports(){
+  if(sharedLoaded) return;
+  sharedLoaded = true;
+  try{
+    const r = await fetch("reports/reports.json", {cache:"no-cache"});
+    if(!r.ok) return;
+    const add = (await r.json()).filter(n => !LOGS.some(o => o.spot===n.spot && o.t===n.t && o.obs===n.obs)).map(n => ({...n, shared:true}));
+    LOGS = add.concat(LOGS);
+  }catch(e){ /* opened as a file, or offline: local reports only */ }
+}
 
 // ---------- math helpers ----------
 const rad = d => d*Math.PI/180;
@@ -453,7 +467,7 @@ async function show(force){
   renderTabs();
   const spot = SPOTS.find(s=>s.id===current);
   document.getElementById("nowCard").innerHTML = `<div class="loader">Loading ${spot.name}…</div>`;
-  try{ await ensureData(spot, force); }
+  try{ await loadSharedReports(); await ensureData(spot, force); }
   catch(e){
     const box = document.getElementById("nowCard");
     if(e.blocked){
@@ -651,8 +665,8 @@ function renderLog(){
     ${mine.slice().reverse().map(L => { const raw = L.parts?rawPredFt(L.parts, spot):null; const c = raw!=null?calibrate(raw,L.tp,cal):null;
       return `<tr><td class="mono">${L.t.replace("T"," ")}</td><td class="mono"><b>${fmt(L.obs)}</b></td><td class="mono">${fmt(c)}</td><td class="mono">${fmt(L.sl)}</td>
       <td class="mono">${L.tp?fmt(L.tp,0)+"s":"–"} ${compass(L.dir)}</td><td style="text-align:left">${(L.note||"").replace(/</g,"&lt;")}</td>
-      <td><button class="btn ghost" data-del="${L.i}" style="padding:2px 8px">✕</button></td></tr>`;}).join("")}</table>` : `<p class="note">No reports for ${spot.name} yet.</p>`;
-  document.querySelectorAll("[data-del]").forEach(b => b.onclick = () => { LOGS.splice(+b.dataset.del,1); LS.set("oxs_logs",LOGS); show(); });
+      <td>${L.shared ? `<span class="note" title="From the shared reports file">shared</span>` : `<button class="btn ghost" data-del="${L.i}" style="padding:2px 8px">✕</button>`}</td></tr>`;}).join("")}</table>` : `<p class="note">No reports for ${spot.name} yet.</p>`;
+  document.querySelectorAll("[data-del]").forEach(b => b.onclick = () => { LOGS.splice(+b.dataset.del,1); saveLogs(); show(); });
 }
 
 document.getElementById("logForm").onsubmit = async ev => {
@@ -677,14 +691,14 @@ document.getElementById("logForm").onsubmit = async ev => {
              parts: row ? row.partsByModel : null,
              tp: row ? median(row.partsByModel.map(p=>p[0]&&p[0].t)) : null,
              dir: row ? median(row.prim.map(x=>x.d)) : null};
-  LOGS.push(L); LS.set("oxs_logs", LOGS);
+  LOGS.push(L); saveLogs();
   msg.textContent = row ? "Saved. Calibration updated." : "Saved, but model data for that hour wasn't available, so it won't count toward calibration.";
   document.getElementById("lObs").value = ""; document.getElementById("lSL").value = ""; document.getElementById("lNote").value = "";
   current = spotId; show();
 };
 document.getElementById("exportBtn").onclick = async () => {
   const io = document.getElementById("io"); io.style.display = "block";
-  io.value = JSON.stringify({logs:LOGS, spots:LS.get("oxs_spots",{})});
+  io.value = JSON.stringify({logs:LOGS.filter(L => !L.shared), spots:LS.get("oxs_spots",{})});
   io.select();
   try{ await navigator.clipboard.writeText(io.value); document.getElementById("logMsg").textContent = "Copied to clipboard. Keep it somewhere safe; reports live in this browser only."; }
   catch(e){ document.getElementById("logMsg").textContent = "Select the text above and copy it."; }
@@ -695,7 +709,7 @@ document.getElementById("importBtn").onclick = () => {
   try{
     const j = JSON.parse(io.value);
     const add = (j.logs||[]).filter(n => !LOGS.some(o => o.spot===n.spot && o.t===n.t && o.obs===n.obs));
-    LOGS = LOGS.concat(add); LS.set("oxs_logs", LOGS);
+    LOGS = LOGS.concat(add); saveLogs();
     if(j.spots){ LS.set("oxs_spots", Object.assign(LS.get("oxs_spots",{}), j.spots)); SPOTS = loadSpots(); }
     document.getElementById("logMsg").textContent = `Imported ${add.length} reports.`; io.style.display="none"; show();
   }catch(e){ document.getElementById("logMsg").textContent = "That isn't valid export JSON."; }
