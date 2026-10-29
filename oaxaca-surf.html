@@ -101,7 +101,28 @@ a{color:var(--sea)}
 
   <div class="card section" id="logCard">
     <h2>Log a session: this is what makes it beat Surfline</h2>
-    <p class="note">After you surf (or watch), enter the face height of the biggest sets: it's compared with the top of the app's range. Add the top of Surfline's range for that hour too. Every report corrects the whole coast's size level and this spot's own factor (plus a period term, since long-period swell is where generic models miss most here), and the app tracks its error against Surfline's.</p>
+    <p class="note">After you surf (or watch), enter the face height of the biggest sets: it's compared with the top of the app's range. Add the top of Surfline's range for that hour too. Every report corrects the whole coast's size level and this spot's own factor (plus a period term, since long-period swell is where generic models miss most here), and the app tracks its error against Surfline's. A photo or video fills in the spot and time from its location data; tap the wave and a surfer on it to measure the size. Reports stay in this browser; press Share on one to send it in as a GitHub issue, and once approved it calibrates the app for everyone.</p>
+    <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+      <input id="lSay" style="flex:1 1 220px;min-width:0" placeholder="Say or type: surfed Zicatela this morning, sets were 5 feet">
+      <button class="btn" id="micBtn" type="button" title="Speak your report">🎤 Speak</button>
+      <button class="btn ghost" id="mediaBtn" type="button" title="Spot and time from the file's location data; measure the wave against the surfer">📷 Photo / video</button>
+      <input type="file" id="mediaFile" accept="image/*,video/*" hidden>
+    </div>
+    <div id="media" style="display:none;margin-bottom:10px">
+      <video id="mVid" controls playsinline muted style="display:none;max-width:100%;max-height:60vh;border-radius:8px"></video>
+      <div id="mVidBar" style="display:none;margin:6px 0"><button class="btn" id="mFrame" type="button">Measure this frame</button> <span class="note">Pause where a surfer is on the biggest wave.</span></div>
+      <canvas id="mCan" style="display:none;max-width:100%;border-radius:8px;touch-action:none;cursor:crosshair"></canvas>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-top:6px">
+        <label class="note" style="display:flex;flex-direction:column;gap:4px">Surfer for scale<select id="mRef">
+          <option value="5.5">Standing on the board (5.5 ft)</option>
+          <option value="4">Crouched / driving (4 ft)</option>
+          <option value="3">Low bottom turn or in the barrel (3 ft)</option>
+        </select></label>
+        <button class="btn ghost" id="mReset" type="button">Start over</button>
+        <button class="btn ghost" id="mClose" type="button">Close</button>
+      </div>
+      <div id="mMsg" class="note" style="margin-top:6px"></div>
+    </div>
     <form class="form" id="logForm">
       <label>Spot<select id="lSpot"></select></label>
       <label>Date &amp; time<input type="datetime-local" id="lTime" required></label>
@@ -212,6 +233,16 @@ async function loadSharedReports(){
     const add = (await r.json()).filter(n => !LOGS.some(o => o.spot===n.spot && o.t===n.t && o.obs===n.obs)).map(n => ({...n, shared:true}));
     LOGS = add.concat(LOGS);
   }catch(e){ /* opened as a file, or offline: local reports only */ }
+}
+// A local report is shared through a GitHub issue: once the owner labels it "approved",
+// .github/workflows/add-report.yml adds it to reports/reports.json.
+const REPO = "davidkarle/oaxaca-surf";
+function shareUrl(L){
+  const {i, shared, ...r} = L;
+  const spot = SPOTS.find(s=>s.id===L.spot);
+  const title = `Report: ${spot?spot.name:L.spot} ${L.t.replace("T"," ")}, ${L.obs} ft`;
+  const body = "Session report from the app. Once it's labelled `approved` it's added to the shared reports and calibrates the app for everyone.\n\n```json\n" + JSON.stringify(r) + "\n```\n";
+  return `https://github.com/${REPO}/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
 }
 
 // ---------- math helpers ----------
@@ -517,8 +548,8 @@ async function ensureData(spot, force){
 }
 function setStatus(s){ document.getElementById("status").textContent = s; }
 
-function nowKey(){
-  const p = new Intl.DateTimeFormat("en-CA",{timeZone:TZ,year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",hour12:false}).formatToParts(new Date());
+function nowKey(d = new Date()){
+  const p = new Intl.DateTimeFormat("en-CA",{timeZone:TZ,year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",hour12:false}).formatToParts(d);
   const o = {}; p.forEach(x=>o[x.type]=x.value);
   return `${o.year}-${o.month}-${o.day}T${o.hour==="24"?"00":o.hour}:00`;
 }
@@ -745,8 +776,9 @@ function renderLog(){
     ${mine.slice().reverse().map(L => { const raw = L.parts?rawPredFt(L.parts, spot, L.models):null; const c = raw!=null?SET*calibrate(raw,L.tp,cal):null;
       return `<tr><td class="mono">${L.t.replace("T"," ")}</td><td class="mono"><b>${fmt(L.obs)}</b></td><td class="mono">${fmt(c)}</td><td class="mono">${fmt(L.sl)}</td>
       <td class="mono">${L.tp?fmt(L.tp,0)+"s":"–"} ${compass(L.dir)}</td><td style="text-align:left">${(L.note||"").replace(/</g,"&lt;")}</td>
-      <td>${L.shared ? `<span class="note" title="From the shared reports file">shared</span>` : `<button class="btn ghost" data-del="${L.i}" style="padding:2px 8px">✕</button>`}</td></tr>`;}).join("")}</table>` : `<p class="note">No reports for ${spot.name} yet.</p>`;
+      <td style="white-space:nowrap">${L.shared ? `<span class="note" title="From the shared reports file">shared</span>` : `${L.parts ? `<button class="btn ghost" data-share="${L.i}" style="padding:2px 8px" title="Open a GitHub issue to add this report to the shared reports">Share</button> ` : ""}<button class="btn ghost" data-del="${L.i}" style="padding:2px 8px">✕</button>`}</td></tr>`;}).join("")}</table>` : `<p class="note">No reports for ${spot.name} yet.</p>`;
   document.querySelectorAll("[data-del]").forEach(b => b.onclick = () => { LOGS.splice(+b.dataset.del,1); saveLogs(); show(); });
+  document.querySelectorAll("[data-share]").forEach(b => b.onclick = () => window.open(shareUrl(LOGS[+b.dataset.share]), "_blank", "noopener"));
 }
 
 document.getElementById("logForm").onsubmit = async ev => {
@@ -773,10 +805,208 @@ document.getElementById("logForm").onsubmit = async ev => {
              tp: row ? median(row.partsByModel.map(p=>p[0]&&p[0].t)) : null,
              dir: row ? median(row.prim.map(x=>x.d)) : null};
   LOGS.push(L); saveLogs();
-  msg.textContent = row ? "Saved. Calibration updated." : "Saved, but model data for that hour wasn't available, so it won't count toward calibration.";
+  msg.textContent = row ? "Saved. Calibration updated. Press Share in the table below to add it to the shared reports (needs a GitHub account)." :"Saved, but model data for that hour wasn't available, so it won't count toward calibration.";
   document.getElementById("lObs").value = ""; document.getElementById("lSL").value = ""; document.getElementById("lNote").value = "";
   current = spotId; show();
 };
+// ---------- spoken / typed quick report ----------
+// "I surfed Zicatela today, it was 5 feet" → fills the form (spot, time, biggest sets, Surfline, note) for the
+// surfer to check and save. English and Spanish keywords; speech uses the browser's SpeechRecognition where it exists.
+const SPOT_WORDS = [[/\b(zica ?tell?a|zika ?tell?a|sica ?tell?a|zicatela|zica|zika|mexican pipeline)\b/, "zicatela"],
+  [/\bla ?punta\b|\bpunta\b/, "lapunta"], [/\bpuerte?cito\b/, "puertecito"], [/\bplataforma\b|\bplatform\b/, "plataforma"],
+  [/\bbarra\b/, "barra"]];
+const NUM_WORDS = {zero:0,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,eleven:11,twelve:12,
+  thirteen:13,fourteen:14,fifteen:15,sixteen:16,eighteen:18,twenty:20,thirty:30,
+  uno:1,un:1,una:1,dos:2,tres:3,cuatro:4,cinco:5,seis:6,siete:7,ocho:8,nueve:9,diez:10,once:11,doce:12,quince:15,veinte:20};
+function parseSpoken(s){
+  s = " " + s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"") + " ";
+  s = s.replace(/\b([a-z]+)\b/g, w => w in NUM_WORDS ? String(NUM_WORDS[w]) : w)
+       .replace(/(\d+)\s*(and a half|y medio|½)/g, (_,n) => `${+n+0.5}`);
+  const out = {};
+  for(const [re,id] of SPOT_WORDS) if(re.test(s)){ out.spot = id; break; }
+  // date and hour, Oaxaca time
+  let [day, hour] = nowKey().split("T"); hour = +hour.slice(0,2);
+  if(/\b(yesterday|ayer)\b/.test(s)){ const d = new Date(day+"T12:00Z"); d.setUTCDate(d.getUTCDate()-1); day = d.toISOString().slice(0,10); hour = null; }
+  let h = null;
+  const at = s.match(/\b(?:at|a las|around|about)\s+(\d{1,2})(?:[:.](\d\d))?\s*(am|pm|a\.m\.|p\.m\.)?/);
+  if(at){ h = +at[1]; if(/^p/.test(at[3]||"") && h<12) h += 12; else if(/^a/.test(at[3]||"") && h===12) h = 0; else if(!at[3] && h<6) h += 12; s = s.replace(at[0]," "); }
+  else if(/\b(dawn|sunrise|first light|amanecer)\b/.test(s)) h = 7;
+  else if(/\b(this morning|morning|manana)\b/.test(s)) h = 9;
+  else if(/\b(midday|noon|mediodia)\b/.test(s)) h = 12;
+  else if(/\b(afternoon|tarde)\b/.test(s)) h = 15;
+  else if(/\b(sunset|evening|atardecer)\b/.test(s)) h = 17;
+  if(h==null) h = hour==null ? 9 : hour;
+  out.t = `${day}T${String(Math.min(23,h)).padStart(2,"0")}:00`;
+  // Surfline's number, if mentioned, before the surfer's own
+  const sl = s.match(/surf ?line\D{0,20}?(\d+(?:\.\d+)?)(?:\s*(?:to|-|a)\s*(\d+(?:\.\d+)?))?/);
+  if(sl){ out.sl = +(sl[2]||sl[1]); s = s.replace(sl[0]," "); }
+  // biggest sets: prefer a number with a unit; a range ("4 to 6 feet") counts its top
+  const ft = s.match(/(\d+(?:\.\d+)?)(?:\s*(?:to|-|or|a|o)\s*(\d+(?:\.\d+)?))?\s*(?:ft|feet|foot|pies|pie|')/)
+          || s.match(/(\d+(?:\.\d+)?)(?:\s*(?:to|-|or)\s*(\d+(?:\.\d+)?))?(?![\d.])/);
+  if(ft) out.obs = +(ft[2]||ft[1]);
+  return out;
+}
+function applySpoken(text){
+  const r = parseSpoken(text), msg = document.getElementById("logMsg");
+  if(r.spot) document.getElementById("lSpot").value = r.spot;
+  document.getElementById("lTime").value = r.t;
+  if(r.obs!=null) document.getElementById("lObs").value = r.obs;
+  if(r.sl!=null) document.getElementById("lSL").value = r.sl;
+  document.getElementById("lNote").value = text.trim().slice(0,200);
+  const name = r.spot ? SPOTS.find(s=>s.id===r.spot).name : null;
+  const missing = [!r.spot && "spot", r.obs==null && "wave size"].filter(Boolean);
+  msg.textContent = `${name||"?"}, ${r.t.replace("T"," ")}, biggest sets ${r.obs!=null? r.obs+" ft" : "?"}${r.sl!=null? `, Surfline ${r.sl} ft`:""}. `
+    + (missing.length ? `Didn't catch the ${missing.join(" or ")}: fill it in below, then Save report.` : "Check it and press Save report.");
+}
+const sayBox = document.getElementById("lSay");
+sayBox.onkeydown = e => { if(e.key==="Enter" && sayBox.value.trim()){ e.preventDefault(); applySpoken(sayBox.value); } };
+sayBox.onchange = () => sayBox.value.trim() && applySpoken(sayBox.value);
+const Recog = window.SpeechRecognition || window.webkitSpeechRecognition;
+const micBtn = document.getElementById("micBtn");
+if(!Recog) micBtn.style.display = "none";   // e.g. Firefox: typing (or the phone keyboard's dictation) still works
+else micBtn.onclick = () => {
+  const rec = new Recog(); rec.lang = navigator.language || "en-US"; rec.interimResults = true;
+  const msg = document.getElementById("logMsg");
+  micBtn.disabled = true; micBtn.textContent = "🎤 Listening…"; msg.textContent = "Listening: say the spot, when, and how big the sets were.";
+  rec.onresult = e => { sayBox.value = [...e.results].map(x=>x[0].transcript).join(" ");
+                        if(e.results[e.results.length-1].isFinal) applySpoken(sayBox.value); };
+  rec.onerror = e => { msg.textContent = e.error==="not-allowed" ? "Microphone access was blocked. Type the report in the box instead." : `Didn't hear that (${e.error}). Try again or type it.`; };
+  rec.onend = () => { micBtn.disabled = false; micBtn.textContent = "🎤 Speak"; };
+  rec.start();
+};
+
+// ---------- photo / video report ----------
+// The file's own metadata gives the spot (GPS → nearest spot) and the hour; the size comes from the surfer
+// riding it: tap the crest and trough of the face, then the surfer's head and feet, and face = ratio × surfer height
+// (both are about the same distance from the camera, so the ratio survives the zoom and the perspective).
+const EXIFR = "https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js";
+const SPOT_RADIUS_KM = 3;
+function loadExifr(){
+  if(window.exifr) return Promise.resolve(window.exifr);
+  return new Promise((ok, fail) => { const s = document.createElement("script"); s.src = EXIFR;
+    s.onload = () => ok(window.exifr); s.onerror = fail; document.head.appendChild(s); });
+}
+function kmBetween(a, b, c, d){
+  const x = rad(d-b)*Math.cos(rad((a+c)/2)), y = rad(c-a);
+  return 6371*Math.hypot(x, y);
+}
+async function photoMeta(file){
+  const exifr = await loadExifr();
+  const out = {};
+  try{ const g = await exifr.gps(file); if(g && isFinite(g.latitude)) { out.lat = g.latitude; out.lon = g.longitude; } }catch(e){}
+  try{
+    const m = await exifr.parse(file, {pick:["DateTimeOriginal","CreateDate","OffsetTimeOriginal"], reviveValues:false}) || {};
+    const raw = m.DateTimeOriginal || m.CreateDate;   // "2026:10:29 08:12:33", the camera's local clock
+    const p = raw && String(raw).match(/^(\d{4}):(\d\d):(\d\d) (\d\d)/);
+    if(p) out.t = m.OffsetTimeOriginal ? nowKey(new Date(`${p[1]}-${p[2]}-${p[3]}T${p[4]}:00:00${m.OffsetTimeOriginal}`)) : `${p[1]}-${p[2]}-${p[3]}T${p[4]}:00`;
+  }catch(e){}
+  return out;
+}
+async function videoMeta(file){
+  // Walk the top-level MP4/MOV boxes to the moov box (phones often put it at the end) and read it as text.
+  let off = 0, moov = null;
+  while(off + 8 <= file.size){
+    const h = new DataView(await file.slice(off, off+16).arrayBuffer());
+    let size = h.getUint32(0); const type = String.fromCharCode(h.getUint8(4), h.getUint8(5), h.getUint8(6), h.getUint8(7));
+    if(size === 1 && h.byteLength >= 16) size = Number(h.getBigUint64(8)); else if(size === 0) size = file.size - off;
+    if(size < 8) break;
+    if(type === "moov"){ moov = new Uint8Array(await file.slice(off, off + Math.min(size, 20e6)).arrayBuffer()); break; }
+    off += size;
+  }
+  if(!moov) return {};
+  const txt = new TextDecoder("latin1").decode(moov), out = {};
+  const loc = txt.match(/([+-]\d{2}\.\d{2,})([+-]\d{3}\.\d{2,})/);   // ISO 6709, e.g. +15.8570-097.0620/
+  if(loc){ out.lat = +loc[1]; out.lon = +loc[2]; }
+  const cd = txt.match(/(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(Z|[+-]\d\d:?\d\d)/);   // Apple's creationdate, with offset
+  if(cd) out.t = nowKey(new Date(cd[1] + (cd[2] === "Z" ? "Z" : cd[2].replace(/^([+-]\d\d):?(\d\d)$/, "$1:$2"))));
+  else {
+    const i = txt.indexOf("mvhd");   // creation time in seconds since 1904, UTC
+    if(i > 0){ const v = new DataView(moov.buffer, moov.byteOffset + i + 4);
+      const s = v.getUint8(0) === 1 ? Number(v.getBigUint64(4)) : v.getUint32(4);
+      if(s > 3.7e9) out.t = nowKey(new Date((s - 2082844800)*1000)); }   // 3.7e9 s ≈ 2021; 0 means unset
+  }
+  return out;
+}
+
+const M = {pts: [], src: null};
+const mCan = document.getElementById("mCan"), mVid = document.getElementById("mVid");
+const STEPS = ["Tap the crest: the top of the wave face.", "Tap the trough: the bottom of the face, in front of the wave.",
+               "Tap the top of the surfer's head.", "Tap the surfer's feet (on the board)."];
+function mDraw(){
+  const g = mCan.getContext("2d");
+  if(M.src) g.drawImage(M.src, 0, 0, mCan.width, mCan.height);
+  const r = mCan.width/250;
+  M.pts.forEach((p, k) => {
+    g.fillStyle = g.strokeStyle = k < 2 ? "#3fb6d9" : "#e8c07a"; g.lineWidth = r*0.8;
+    g.beginPath(); g.arc(p.x, p.y, r*2, 0, 7); g.fill();
+    if(k % 2){ const q = M.pts[k-1]; g.beginPath(); g.moveTo(q.x, q.y); g.lineTo(p.x, p.y); g.stroke(); }
+  });
+  const msg = document.getElementById("mMsg");
+  if(M.pts.length < 4){ msg.textContent = `${M.pts.length+1}/4 · ${STEPS[M.pts.length]}`; return; }
+  const face = Math.abs(M.pts[1].y - M.pts[0].y), surfer = Math.abs(M.pts[3].y - M.pts[2].y);
+  if(surfer < 3){ msg.textContent = "The surfer's head and feet are too close together. Start over and zoom the photo if needed."; return; }
+  const ref = +document.getElementById("mRef").value, ft = Math.round(2*face/surfer*ref)/2;
+  document.getElementById("lObs").value = ft;
+  const note = document.getElementById("lNote");
+  note.value = `measured from ${M.kind}: face ${(face/surfer).toFixed(1)}x a ${ref} ft surfer` + (note.value && !/^measured from/.test(note.value) ? "; " + note.value : "");
+  msg.textContent = `Face ≈ ${(face/surfer).toFixed(1)} × the surfer = ${ft} ft, filled in below. Measure the biggest wave you saw, check the form and press Save report.`;
+}
+function mShow(src, w, h){
+  const k = Math.min(1, 1600/w);
+  mCan.width = Math.round(w*k); mCan.height = Math.round(h*k);
+  M.src = src; M.pts = []; mCan.style.display = "block"; mDraw();
+}
+mCan.onpointerdown = e => {
+  if(M.pts.length >= 4) return;
+  const b = mCan.getBoundingClientRect();
+  M.pts.push({x: (e.clientX - b.left)*mCan.width/b.width, y: (e.clientY - b.top)*mCan.height/b.height});
+  mDraw();
+};
+document.getElementById("mRef").onchange = () => mDraw();
+document.getElementById("mReset").onclick = () => { M.pts = []; mDraw(); };
+document.getElementById("mClose").onclick = () => { document.getElementById("media").style.display = "none"; mVid.pause(); };
+document.getElementById("mFrame").onclick = () => {
+  if(!mVid.videoWidth) return;
+  const c = document.createElement("canvas"); c.width = mVid.videoWidth; c.height = mVid.videoHeight;
+  c.getContext("2d").drawImage(mVid, 0, 0);
+  mShow(c, c.width, c.height);
+  mCan.scrollIntoView({block: "nearest"});
+};
+document.getElementById("mediaBtn").onclick = () => document.getElementById("mediaFile").click();
+document.getElementById("mediaFile").onchange = async ev => {
+  const file = ev.target.files[0]; ev.target.value = "";
+  if(!file) return;
+  const video = file.type.startsWith("video/") || /\.(mov|mp4|m4v)$/i.test(file.name);
+  const msg = document.getElementById("logMsg");
+  document.getElementById("media").style.display = "block";
+  mCan.style.display = "none"; mVid.style.display = "none"; document.getElementById("mVidBar").style.display = "none";
+  M.kind = video ? "video" : "photo";
+  document.getElementById("mMsg").textContent = "Loading…";
+  const url = URL.createObjectURL(file);
+  if(video){
+    mVid.src = url; mVid.style.display = "block"; document.getElementById("mVidBar").style.display = "block";
+    document.getElementById("mMsg").textContent = "Play the video, pause on a surfer riding the biggest wave and press Measure this frame.";
+    mVid.onerror = () => document.getElementById("mMsg").textContent = "This browser can't play that video format, but its location and time were still read.";
+  } else {
+    const img = new Image();
+    img.onload = () => mShow(img, img.naturalWidth, img.naturalHeight);
+    img.onerror = () => document.getElementById("mMsg").textContent = "This browser can't show that photo format (HEIC?), but its location and time were still read. A JPEG or a screenshot can be measured.";
+    img.src = url;
+  }
+  // spot and time from the file
+  let meta = {};
+  try{ meta = video ? await videoMeta(file) : await photoMeta(file); }catch(e){}
+  const said = [];
+  if(meta.lat != null){
+    const near = SPOTS.map(s => ({s, km: kmBetween(meta.lat, meta.lon, s.lat, s.lon)})).sort((a, b) => a.km - b.km)[0];
+    if(near.km <= SPOT_RADIUS_KM){ document.getElementById("lSpot").value = near.s.id; said.push(`${near.s.name} (taken ${near.km < 1 ? Math.round(near.km*1000)+" m" : near.km.toFixed(1)+" km"} from the spot)`); }
+    else said.push(`taken ${near.km.toFixed(0)} km from the nearest spot (${near.s.name}), so pick the spot yourself`);
+  } else said.push("no location in the file (phones often strip it when sharing; pick the spot yourself)");
+  if(meta.t){ document.getElementById("lTime").value = meta.t; said.push(meta.t.replace("T", " ")); }
+  else said.push("no capture time in the file, so check the time");
+  msg.textContent = `From the ${M.kind}: ${said.join(", ")}.`;
+};
+
 document.getElementById("exportBtn").onclick = async () => {
   const io = document.getElementById("io"); io.style.display = "block";
   io.value = JSON.stringify({logs:LOGS.filter(L => !L.shared), spots:LS.get("oxs_spots",{})});

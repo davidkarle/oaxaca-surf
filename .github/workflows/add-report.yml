@@ -1,0 +1,56 @@
+# Adds a session report shared from the app (a GitHub issue) to reports/reports.json when the repository
+# owner labels the issue "approved", then redeploys the site so the report calibrates it for everyone.
+name: Add approved report
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: reports
+  cancel-in-progress: false
+
+jobs:
+  add:
+    if: github.event.label.name == 'approved' && github.event.sender.login == github.repository_owner
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE: ${{ github.event.issue.number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The issue body goes in through the environment, never into the script text.
+      - name: Add report
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: python tools/add_report.py | tee result.txt; exit ${PIPESTATUS[0]}
+
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898+github-actions[bot]@users.noreply.github.com"
+          git add reports/reports.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Add shared report from #$ISSUE"
+          git push
+          # A push made with the workflow token doesn't start other workflows, so redeploy explicitly.
+          gh workflow run pages.yml --ref main
+
+      - name: Close issue
+        run: gh issue close "$ISSUE" --repo "$GITHUB_REPOSITORY" --comment "$(cat result.txt)"
+
+      - name: Explain failure
+        if: failure()
+        run: |
+          gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "$(cat result.txt 2>/dev/null || echo 'Something went wrong.') See $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --remove-label approved
